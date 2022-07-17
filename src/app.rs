@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use winit::event::{ ScanCode, KeyboardInput, WindowEvent, ElementState };
+use winit::event::{ ScanCode, KeyboardInput, WindowEvent, ElementState, VirtualKeyCode };
 use skulpin::{
      CoordinateSystemHelper,
     skia_safe,
@@ -16,9 +16,9 @@ const SPACE_SCANCODE: ScanCode = 57;
 
 pub struct App<'a> {
     last_events: Vec<WindowEvent<'a>>,
-    pressed_keys: HashSet<ScanCode>,
+    pressed_keys: HashSet<VirtualKeyCode>,
 
-    state: bool,
+    keys: isize,
 }
 
 /// Public methods
@@ -28,18 +28,21 @@ impl<'a> App<'a> {
             last_events: Default::default(),
             pressed_keys: Default::default(),
 
-            state: false,
+            keys: 0,
         }
     }
 
     pub fn add_window_event(&mut self, we: WindowEvent<'a>) {
         match &we {
-            WindowEvent::KeyboardInput { input, .. } => {
-                if input.state == ElementState::Pressed { 
-                    self.pressed_keys.insert(input.scancode);
+            WindowEvent::KeyboardInput {
+                input: KeyboardInput { state, virtual_keycode: Some(vkc), .. },
+                .. 
+            } => {
+                if *state == ElementState::Pressed { 
+                    self.pressed_keys.insert(*vkc);
                 }
                 else {
-                    self.pressed_keys.remove(&input.scancode);
+                    self.pressed_keys.remove(vkc);
                 }
             }
             _ => (),
@@ -60,28 +63,28 @@ impl<'a> App<'a> {
 
 /// Private methods
 impl<'a> App<'a> {
-    fn is_key_just_pressed(&self, scan_code: ScanCode) -> bool {
+    fn is_key_just_pressed(&self, vck: VirtualKeyCode) -> bool {
         self.last_events.iter().any(|we|
             matches!(we,
                 WindowEvent::KeyboardInput {
-                    input: KeyboardInput { scancode, state: ElementState::Pressed, .. },
+                    input: KeyboardInput { virtual_keycode, state: ElementState::Pressed, .. },
                     .. 
-                } if *scancode == scan_code
+                } if *virtual_keycode == Some(vck)
             )
         )
     }
-    fn is_key_just_released(&self, scan_code: ScanCode) -> bool {
+    fn is_key_just_released(&self, vck: VirtualKeyCode) -> bool {
         self.last_events.iter().any(|we|
             matches!(we,
                 WindowEvent::KeyboardInput {
-                    input: KeyboardInput { scancode, state: ElementState::Released, .. },
+                    input: KeyboardInput { virtual_keycode, state: ElementState::Released, .. },
                     .. 
-                } if *scancode == scan_code
+                } if *virtual_keycode == Some(vck)
             )
         )
     }
-    fn is_key_pressed(&self, scan_code: ScanCode) -> bool {
-        self.pressed_keys.contains(&scan_code)
+    fn is_key_pressed(&self, vck: VirtualKeyCode) -> bool {
+        self.pressed_keys.contains(&vck)
     }
 
     fn draw(
@@ -89,9 +92,21 @@ impl<'a> App<'a> {
         canvas: &mut Canvas,
         coordinate_system_helper: CoordinateSystemHelper,
     ) {
-        if self.is_key_just_pressed(SPACE_SCANCODE) {
-            self.state = !self.state;
-        }
+        self.keys += self.last_events
+            .iter().map(|we| -> isize { match we {
+                WindowEvent::KeyboardInput {
+                    input: KeyboardInput {
+                        virtual_keycode: Some(VirtualKeyCode::Back),
+                        state: ElementState::Pressed, ..
+                    }, ..
+                } => -1,
+
+                WindowEvent::KeyboardInput {
+                    input: KeyboardInput { state: ElementState::Pressed, .. }, ..
+                } => 1,
+
+                _ => 0,
+            }}).sum::<isize>();
 
         let extents =
             coordinate_system_helper.surface_extents();
@@ -104,9 +119,9 @@ impl<'a> App<'a> {
         paint.set_style(paint::Style::StrokeAndFill);
         paint.set_stroke_width(2.0);
 
-        let h = if self.state { 50. } else { 0. };
+        let w = self.keys as f32 * 25.;
         canvas.draw_circle(
-            Point::new(width / 2., height / 2. + h),
+            Point::new(w, height / 2.),
             50.0,
             &paint,
         );
