@@ -1,11 +1,10 @@
 use std::collections::HashSet;
-use std::time::Instant;
+use std::time::{ Instant, Duration };
 
-use winit::event::{ ScanCode, KeyboardInput, WindowEvent, ElementState, VirtualKeyCode };
+use winit::event::{ KeyboardInput, WindowEvent, ElementState, VirtualKeyCode };
 use skulpin::{
      CoordinateSystemHelper,
     skia_safe,
-    rafx::api::RafxExtents2D 
 };
 use skia_safe::{
     Point, Rect,
@@ -13,7 +12,42 @@ use skia_safe::{
     Canvas, paint, Paint,
 };
 
-const SPACE_SCANCODE: ScanCode = 57;
+#[derive(Debug, Clone, Copy)]
+pub enum AppStage {
+    Inputing {
+        ball_red_flash_duration: Duration,
+        ball_red_flash_start: Instant,
+    },
+    Validating {
+        start: Instant,
+    },
+}
+
+impl AppStage {
+    pub fn inputing() -> Self {
+        AppStage::Inputing {
+            ball_red_flash_duration: Duration::from_millis(500),
+            ball_red_flash_start: Instant::now() - Duration::from_millis(500),
+        }
+    }
+
+    #[track_caller]
+    pub fn with_red_flash(self, dur: Duration) -> Self {
+        match self {
+            Self::Inputing { .. } => Self::Inputing {
+                ball_red_flash_duration: dur,
+                ball_red_flash_start: Instant::now(),
+            },
+            _ => panic!("Cann of with_red_flash on non-inputing stage"),
+        }
+    }
+
+    pub fn validating() -> Self {
+        AppStage::Validating {
+            start: Instant::now(),
+        }
+    }
+}
 
 pub struct App<'a> {
     last_events: Vec<WindowEvent<'a>>,
@@ -22,6 +56,7 @@ pub struct App<'a> {
 
     ball_position: f32,
     ball_velocity: f32,
+    stage: AppStage,
 
     last_update: Instant,
     pass_length: usize,
@@ -38,6 +73,7 @@ impl<'a> App<'a> {
 
             ball_position: 0.,
             ball_velocity: 0.,
+            stage: AppStage::inputing(),
 
             last_update: Instant::now(),
             pass_length: 4,
@@ -104,17 +140,36 @@ impl<'a> App<'a> {
     }
 
     fn update(&mut self, delta_t: f32) {
-        let ball_min = self.current_input.chars().count() as f32;
+        let mut new_stage = None;
+        match &mut self.stage {
+            AppStage::Inputing { .. } => {
+                self.ball_velocity -= 30. * delta_t;
+                self.ball_position += self.ball_velocity * delta_t;
 
-        self.ball_velocity -= 30. * delta_t;
-        self.ball_position += self.ball_velocity * delta_t;
+                let ball_min = self.current_input.chars().count() as f32;
+                if self.ball_position < ball_min {
+                    let diff = ball_min - self.ball_position;
+                    let bounce = if diff < 0.2 { 0. } else { diff * 10. };
 
-        if self.ball_position < ball_min {
-            let diff = ball_min - self.ball_position;
-            let bounce = if diff < 0.2 { 0. } else { diff * 10. };
+                    self.ball_position = ball_min;
+                    self.ball_velocity = (self.ball_velocity.abs() / 2.) + bounce;
+                }
+            },
 
-            self.ball_position = ball_min;
-            self.ball_velocity = (self.ball_velocity.abs() / 2.) + bounce;
+            AppStage::Validating { start, .. } => {
+                if start.elapsed().as_secs_f32() > 2. {
+                    self.current_input.clear();
+                    new_stage = Some(AppStage::inputing().with_red_flash(Duration::from_millis(2000)));
+                }
+                else {
+                    self.ball_velocity = self.ball_velocity / (1. + delta_t * 10.);
+                    self.ball_position += (self.ball_velocity + 1.) * delta_t;
+                }
+            },
+        }
+
+        if let Some(new_stage) = new_stage {
+            self.stage = new_stage;
         }
     }
 
@@ -127,23 +182,6 @@ impl<'a> App<'a> {
         let boxes_gaps = 10.;
         let rect_stroke_width = 5.;
         let ball_stroke_width = 5.;
-
-        for event in &self.last_events {
-            match event {
-                WindowEvent::ReceivedCharacter(c) if c.is_alphanumeric() || c.is_ascii_punctuation() => {
-                    if self.current_input.chars().count() < self.pass_length {
-                        self.current_input.push(*c);
-                    }
-                },
-                WindowEvent::KeyboardInput { input: KeyboardInput {
-                    state: ElementState::Pressed,
-                    virtual_keycode: Some(VirtualKeyCode::Back), ..
-                }, .. } => {
-                    self.current_input.pop();
-                }
-                _ => (),
-            }
-        }
 
         let extents =
             coordinate_system_helper.surface_extents();
@@ -224,8 +262,67 @@ impl<'a> App<'a> {
             &stroke_paint
         );
 
+        let ball_center = Point::new(
+            width / 2.,
+            height / 2. + full_rect_height / 2. - ball_radius
+            - (self.boxes_size * self.ball_position) + boxes_gaps / 2.
+        );
+
+        let mut next_stage = None;
+        match self.stage {
+            AppStage::Inputing { ball_red_flash_start, ball_red_flash_duration, .. } => {
+                // Reading inputs
+                for event in &self.last_events {
+                    match event {
+                        WindowEvent::KeyboardInput { input: KeyboardInput {
+                            state: ElementState::Pressed,
+                            virtual_keycode: Some(VirtualKeyCode::Return), ..
+                        }, .. } => {
+                            if self.current_input.len() < self.pass_length {
+                                next_stage = Some(self.stage.with_red_flash(Duration::from_millis(500)));
+                            }
+                            else {
+                                next_stage = Some(AppStage::validating());
+                            }
+                        }
+
+                        WindowEvent::KeyboardInput { input: KeyboardInput {
+                            state: ElementState::Pressed,
+                            virtual_keycode: Some(VirtualKeyCode::Back), ..
+                        }, .. } => {
+                            self.current_input.pop();
+                        }
+
+                        WindowEvent::ReceivedCharacter(c) if c.is_alphanumeric() || c.is_ascii_punctuation() => {
+                            if self.current_input.chars().count() < self.pass_length {
+                                self.current_input.push(*c);
+                            }
+                        },
+
+                        _ => (),
+                    }
+                }
+
+                /*
+                 * Drawing the balll
+                 */
+                // BLACK (or flashing) FILL
+                fill_paint.set_color4f(Color4f::new(0., 0., 0., 1.), None);
+                let flash_elapsed = ball_red_flash_start.elapsed();
+                if flash_elapsed < ball_red_flash_duration {
+                    let factor = flash_elapsed.as_secs_f32() / ball_red_flash_duration.as_secs_f32();
+                    fill_paint.set_color4f(Color4f::new(1. - factor, 0., 0., 1.), None);
+                }
+                canvas.draw_circle(ball_center, ball_radius, &fill_paint);
+            }
+
+            AppStage::Validating { .. } => {
+
+            },
+        }
+
         /*
-         * Drawing the balll
+         * Continuing ball fill after flashing background is drawn
          */
         // WHITE PROGRESS FILL
         fill_paint.set_color4f(Color4f::new(1., 1., 1., 1.), None);
@@ -253,5 +350,7 @@ impl<'a> App<'a> {
             ball_radius - ball_stroke_width / 2.,
             &stroke_paint,
         );
+
+        self.stage = next_stage.unwrap_or(self.stage);
     }
 }
