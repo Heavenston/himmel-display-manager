@@ -1,3 +1,5 @@
+mod app;
+
 use skulpin::{
     CoordinateSystemHelper,
     skia_safe,
@@ -53,8 +55,7 @@ fn main() {
     }
     let mut renderer = renderer.unwrap();
 
-    // Increment a frame count so we can render something that moves
-    let mut frame_count = 0;
+    let mut app = app::App::new();
 
     // Start the window event loop. Winit will not return once run is called. We will get notified
     // when important events happen.
@@ -78,6 +79,11 @@ fn main() {
                 ..
             } => *control_flow = winit::event_loop::ControlFlow::Exit,
 
+            winit::event::Event::WindowEvent { event, .. } => {
+                if let Some(event) = event.to_static() {
+                    app.add_window_event(event);
+                }
+            }
 
             winit::event::Event::MainEventsCleared => {
                 // Queue a RedrawRequested event.
@@ -95,8 +101,7 @@ fn main() {
                     window_extents,
                     window.scale_factor(),
                     |canvas, coordinate_system_helper| {
-                        draw(canvas, coordinate_system_helper, frame_count);
-                        frame_count += 1;
+                        app.frame(canvas, coordinate_system_helper);
                     },
                 ) {
                     println!("Error during draw: {:?}", e);
@@ -107,29 +112,4 @@ fn main() {
             _ => {}
         }
     });
-}
-
-fn draw(
-    canvas: &mut Canvas,
-    coordinate_system_helper: CoordinateSystemHelper,
-    frame_count: i32,
-) {
-    let t = (frame_count as f32) / 60.;
-
-    let extents =
-        coordinate_system_helper.surface_extents();
-    let (width, height) = 
-        (extents.width as f32, extents.height as f32);
-    canvas.clear(Color::from_rgb(0, 0, 0));
-
-    let mut paint = Paint::new(Color4f::new(1.0, 1.0, 1.0, 1.0), None);
-    paint.set_anti_alias(true);
-    paint.set_style(paint::Style::StrokeAndFill);
-    paint.set_stroke_width(2.0);
-
-    canvas.draw_circle(
-        Point::new(width / 2. + t.cos() * 50., height / 2. + t.sin() * 50.),
-        50.0,
-        &paint,
-    );
 }
