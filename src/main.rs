@@ -1,30 +1,18 @@
 use skulpin::{
-    CoordinateSystem, CoordinateSystemHelper,
+    CoordinateSystemHelper,
     skia_safe,
     rafx::api::RafxExtents2D 
 };
 use skia_safe::{
     Point, 
-    Color, Color3f, Color4f,
+    Color, Color4f,
     Canvas, paint, Paint,
 };
 use winit::window::Fullscreen;
 
-const CANVAS_WIDTH: f32 = 960.;
-const CANVAS_HEIGHT: f32 = 600.;
-
 fn main() {
     // Create the winit event loop
     let event_loop = winit::event_loop::EventLoop::<()>::with_user_event();
-
-    let logical_size = winit::dpi::LogicalSize::new(CANVAS_WIDTH, CANVAS_HEIGHT);
-    let visible_range = skulpin::skia_safe::Rect {
-        left: 0.0,
-        right: logical_size.width as f32,
-        top: 0.0,
-        bottom: logical_size.height as f32,
-    };
-    let scale_to_fit = skulpin::skia_safe::matrix::ScaleToFit::Center;
 
     let monitor = event_loop.primary_monitor().or(event_loop.available_monitors().next());
     let fullscreen = monitor.as_ref()
@@ -36,7 +24,6 @@ fn main() {
     let window = winit::window::WindowBuilder::new()
         .with_title("Skulpin")
         .with_resizable(false)
-        .with_inner_size(logical_size)
         .with_fullscreen(fullscreen)
         .build(&event_loop)
         .expect("Failed to create window");
@@ -56,10 +43,7 @@ fn main() {
 
     // Create the renderer, which will draw to the window
     let renderer = skulpin::RendererBuilder::new()
-        .coordinate_system(skulpin::CoordinateSystem::VisibleRange(
-            visible_range,
-            scale_to_fit,
-        ))
+        .coordinate_system(skulpin::CoordinateSystem::Logical)
         .build(&window, window_extents);
 
     // Check if there were error setting up vulkan
@@ -131,6 +115,11 @@ fn draw(
     frame_count: i32,
 ) {
     let t = (frame_count as f32) / 60.;
+
+    let extents =
+        coordinate_system_helper.surface_extents();
+    let (width, height) = 
+        (extents.width as f32, extents.height as f32);
     canvas.clear(Color::from_rgb(0, 0, 0));
 
     let mut paint = Paint::new(Color4f::new(1.0, 1.0, 1.0, 1.0), None);
@@ -139,7 +128,7 @@ fn draw(
     paint.set_stroke_width(2.0);
 
     canvas.draw_circle(
-        Point::new(CANVAS_WIDTH / 2. + t.cos() * 50., CANVAS_HEIGHT / 2. + t.sin() * 50.),
+        Point::new(width / 2. + t.cos() * 50., height / 2. + t.sin() * 50.),
         50.0,
         &paint,
     );
