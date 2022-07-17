@@ -104,17 +104,17 @@ impl<'a> App<'a> {
     }
 
     fn update(&mut self, delta_t: f32) {
-        let ball_max = self.current_input.len() as f32;
+        let ball_min = self.current_input.chars().count() as f32;
 
-        self.ball_velocity += 30. * delta_t;
+        self.ball_velocity -= 30. * delta_t;
         self.ball_position += self.ball_velocity * delta_t;
 
-        if self.ball_position > ball_max {
-            let diff = self.ball_position - ball_max;
+        if self.ball_position < ball_min {
+            let diff = ball_min - self.ball_position;
             let bounce = if diff < 0.2 { 0. } else { diff * 10. };
 
-            self.ball_position = ball_max;
-            self.ball_velocity = (-self.ball_velocity / 2.) - bounce;
+            self.ball_position = ball_min;
+            self.ball_velocity = (-self.ball_velocity / 2.) + bounce;
         }
     }
 
@@ -124,13 +124,13 @@ impl<'a> App<'a> {
         coordinate_system_helper: CoordinateSystemHelper,
     ) {
         let ball_radius = self.boxes_size / 3.;
-        let boxes_gaps = 3.5;
+        let boxes_gaps = 5.;
         let rect_stroke_width= 5.;
 
         for event in &self.last_events {
             match event {
                 WindowEvent::ReceivedCharacter(c) if c.is_alphanumeric() || c.is_ascii_punctuation() => {
-                    if self.current_input.len() < self.pass_length {
+                    if self.current_input.chars().count() < self.pass_length {
                         self.current_input.push(*c);
                     }
                 },
@@ -168,14 +168,14 @@ impl<'a> App<'a> {
         stroke_paint.set_color4f(Color4f::new(0., 0., 0., 1.), None);
         for i in 0..self.pass_length {
             let x = width / 2. - self.boxes_size / 2.;
-            let y = height / 2. - full_rect_height / 2. + (i as f32 + 1.) * self.boxes_size;
+            let y = height / 2. + full_rect_height / 2. - (i as f32 + 1.) * self.boxes_size;
             let rect = Rect::new(
                 x, y,
                 x + self.boxes_size, y + self.boxes_size,
             );
 
             fill_paint.set_color4f(
-                if i >= self.current_input.len() {
+                if i < self.current_input.chars().count() {
                     Color4f::new(1., 1., 1., 1.)
                 }
                 else {
@@ -230,8 +230,7 @@ impl<'a> App<'a> {
         canvas.draw_circle(
             Point::new(
                 width / 2.,
-                height / 2. - full_rect_height / 2. + self.boxes_size - ball_radius + boxes_gaps / 2.
-                + (self.boxes_size * self.ball_position)
+                height / 2. + full_rect_height / 2. - ball_radius - (self.boxes_size * self.ball_position)
             ),
             ball_radius,
             &fill_paint,
