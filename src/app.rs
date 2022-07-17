@@ -124,8 +124,9 @@ impl<'a> App<'a> {
         coordinate_system_helper: CoordinateSystemHelper,
     ) {
         let ball_radius = self.boxes_size / 3.;
-        let boxes_gaps = 5.;
-        let rect_stroke_width= 5.;
+        let boxes_gaps = 10.;
+        let rect_stroke_width = 5.;
+        let ball_stroke_width = 5.;
 
         for event in &self.last_events {
             match event {
@@ -226,15 +227,31 @@ impl<'a> App<'a> {
         /*
          * Drawing the balll
          */
+        // WHITE PROGRESS FILL
         fill_paint.set_color4f(Color4f::new(1., 1., 1., 1.), None);
+        canvas.draw_arc(
+            Rect::new(
+                width / 2. - ball_radius,
+                height / 2. + full_rect_height / 2. - (self.boxes_size * self.ball_position) + boxes_gaps / 2.
+                - ball_radius * 2.,
+                width / 2. + ball_radius,
+                height / 2. + full_rect_height / 2. - (self.boxes_size * self.ball_position) + boxes_gaps / 2.,
+            ),
+            0., (self.current_input.chars().count() as f32 / self.pass_length as f32) * 360.,
+            true,
+            &fill_paint,
+        );
+        // WHITE STROKE
+        stroke_paint.set_color4f(Color4f::new(1., 1., 1., 1.), None);
+        stroke_paint.set_stroke_width(ball_stroke_width);
         canvas.draw_circle(
             Point::new(
                 width / 2.,
                 height / 2. + full_rect_height / 2. - ball_radius - (self.boxes_size * self.ball_position) 
                 + boxes_gaps / 2.
             ),
-            ball_radius,
-            &fill_paint,
+            ball_radius - ball_stroke_width / 2.,
+            &stroke_paint,
         );
     }
 }
