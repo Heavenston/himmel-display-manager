@@ -230,7 +230,8 @@ impl<'a> App<'a> {
         canvas.draw_circle(
             Point::new(
                 width / 2.,
-                height / 2. + full_rect_height / 2. - ball_radius - (self.boxes_size * self.ball_position)
+                height / 2. + full_rect_height / 2. - ball_radius - (self.boxes_size * self.ball_position) 
+                + boxes_gaps / 2.
             ),
             ball_radius,
             &fill_paint,
