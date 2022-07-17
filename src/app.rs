@@ -114,7 +114,7 @@ impl<'a> App<'a> {
             let bounce = if diff < 0.2 { 0. } else { diff * 10. };
 
             self.ball_position = ball_min;
-            self.ball_velocity = (-self.ball_velocity / 2.) + bounce;
+            self.ball_velocity = (self.ball_velocity.abs() / 2.) + bounce;
         }
     }
 
