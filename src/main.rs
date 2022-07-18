@@ -1,5 +1,7 @@
 mod app;
 
+use std::fmt;
+
 use skulpin::{
     CoordinateSystemHelper,
     skia_safe,
@@ -12,9 +14,25 @@ use skia_safe::{
 };
 use winit::window::Fullscreen;
 
+pub type Author = pam::Authenticator<'static, pam::PasswordConv>;
+
+pub struct LoginResultEvent {
+    pub success: bool,
+    pub author: Author,
+}
+
+impl fmt::Debug for LoginResultEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LoginResultEvent")
+            .field("success", &self.success)
+            .field("author", &())
+            .finish()
+    }
+}
+
 fn main() {
     // Create the winit event loop
-    let event_loop = winit::event_loop::EventLoop::<()>::with_user_event();
+    let event_loop = winit::event_loop::EventLoop::<LoginResultEvent>::with_user_event();
 
     let monitor = event_loop.primary_monitor().or(event_loop.available_monitors().next());
     let fullscreen = monitor.as_ref()
@@ -55,7 +73,29 @@ fn main() {
     }
     let mut renderer = renderer.unwrap();
 
-    let mut app = app::App::new();
+    let login_callback = {
+        let proxy = event_loop.create_proxy();
+        move |username, password| {
+            std::thread::spawn({
+                let proxy = proxy.clone();
+                move || {
+                    let mut author = pam::Authenticator::with_password("system-auth").unwrap();
+                    author.get_handler().set_credentials(username, password);
+                    let auth_result = author.authenticate();
+                    let r = proxy.send_event(LoginResultEvent {
+                        success: auth_result.is_ok(),
+                        author,
+                    });
+                    match r {
+                        Ok(()) => (),
+                        Err(e) => println!("{:?}", e),
+                    }
+                }
+            });
+        }
+    };
+
+    let mut app = app::App::new(login_callback, "malo", 4);
 
     // Start the window event loop. Winit will not return once run is called. We will get notified
     // when important events happen.
@@ -88,6 +128,10 @@ fn main() {
             winit::event::Event::MainEventsCleared => {
                 // Queue a RedrawRequested event.
                 window.request_redraw();
+            }
+
+            winit::event::Event::UserEvent(LoginResultEvent { success, author: _ }) => {
+                app.login_result(success);
             }
 
             winit::event::Event::RedrawRequested(_window_id) => {

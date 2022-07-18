@@ -2,6 +2,8 @@ use std::collections::HashSet;
 use std::time::{ Instant, Duration };
 use std::sync::{ Arc, Mutex, atomic::{ AtomicBool, self } };
 
+use super::Author;
+
 use winit::event::{ KeyboardInput, WindowEvent, ElementState, VirtualKeyCode };
 use skulpin::{
     CoordinateSystemHelper,
@@ -13,26 +15,6 @@ use skia_safe::{
     Canvas, paint, Paint,
 };
 
-type Author = pam::Authenticator<'static, pam::PasswordConv>;
-
-pub fn try_auth_with(
-    username: String,
-    password: String,
-    finished: Arc<AtomicBool>,
-    author_output: Arc<Mutex<Option<Author>>>,
-)  {
-    let mut author = Author::with_password("system-auth").unwrap();
-    author.get_handler().set_credentials(username, password);
-    let result = author.authenticate();
-    match result {
-        Ok(()) => {
-            *author_output.lock().unwrap() = Some(author);
-        },
-        Err(_) => ()
-    }
-    finished.store(true, atomic::Ordering::Release);
-}
-
 #[derive(Clone)]
 pub enum AppStage {
     Inputing {
@@ -41,9 +23,12 @@ pub enum AppStage {
     },
     Validating {
         start: Instant,
-        finished: Arc<AtomicBool>,
-        author: Arc<Mutex<Option<Author>>>,
+        finished: bool,
+        succeed: bool,
     },
+    LoggingIn {
+        start: Instant,
+    }
 }
 
 impl AppStage {
@@ -65,52 +50,59 @@ impl AppStage {
         }
     }
 
-    pub fn validating(username: String, password: String) -> Self {
-        let finished = Arc::default();
-        let author = Arc::new(Mutex::new(None));
-        let finished_ = Arc::clone(&finished);
-        let author_ = Arc::clone(&author);
-        std::thread::spawn(move || try_auth_with(username, password, finished_, author_));
+    pub fn validating() -> Self {
         AppStage::Validating {
             start: Instant::now(),
-            finished,
-            author,
+            finished: false,
+            succeed: false,
+        }
+    }
+
+    pub fn logging_in() -> Self {
+        AppStage::LoggingIn {
+            start: Instant::now(),
         }
     }
 }
 
-pub struct App {
+pub struct App<F>
+    where F: Fn(String, String) -> ()
+{
+    login_callback: F,
+
     last_events: Vec<WindowEvent<'static>>,
     pressed_keys: HashSet<VirtualKeyCode>,
     boxes_size: f32,
-    authentificator: pam::Authenticator<'static, pam::PasswordConv>,
-    username: String,
+    login_username: String,
+    pass_length: usize,
 
     ball_position: f32,
     ball_velocity: f32,
     stage: AppStage,
 
     last_update: Instant,
-    pass_length: usize,
     current_input: String,
 }
 
 /// Public methods
-impl App {
-    pub fn new() -> Self {
+impl<F> App<F>
+    where F: Fn(String, String) -> ()
+{
+    pub fn new(login_callback: F, login_username: impl Into<String>, pass_length: usize) -> Self {
         Self {
+            login_callback,
+            
             last_events: Default::default(),
             pressed_keys: Default::default(),
             boxes_size: 100.,
-            authentificator: pam::Authenticator::with_password("system-auth").unwrap(),
-            username: "malo".to_string(),
+            login_username: login_username.into(),
+            pass_length,
 
             ball_position: 0.,
             ball_velocity: 0.,
             stage: AppStage::inputing(),
 
             last_update: Instant::now(),
-            pass_length: 4,
             current_input: String::default(),
         }
     }
@@ -145,10 +137,23 @@ impl App {
 
         self.last_update = Instant::now();
     }
+
+    pub fn login_result(&mut self, s: bool) {
+        match &mut self.stage {
+            AppStage::Validating { finished, succeed, .. } => {
+                *finished = true;
+                *succeed = s;
+            }
+            
+            _ => panic!("Called login_result with the app in the wrong stage"),
+        }
+    }
 }
 
 /// Private methods
-impl App {
+impl<F> App<F>
+    where F: Fn(String, String) -> (),
+{
     fn is_key_just_pressed(&self, vck: VirtualKeyCode) -> bool {
         self.last_events.iter().any(|we|
             matches!(we,
@@ -190,11 +195,10 @@ impl App {
                 }
             },
 
-            AppStage::Validating { start, finished, author, .. } => {
-                if start.elapsed().as_secs_f32() > 2. && finished.load(atomic::Ordering::Acquire) {
-                    let author = author.lock().unwrap().take();
-                    if author.is_some() {
-                        std::process::exit(0);
+            AppStage::Validating { start, finished, succeed, .. } => {
+                if start.elapsed().as_secs_f32() > 2. && *finished {
+                    if *succeed {
+                        new_stage = Some(AppStage::logging_in());
                     }
                     else {
                         self.current_input.clear();
@@ -206,6 +210,8 @@ impl App {
                     self.ball_position += (self.ball_velocity + 1.) * delta_t;
                 }
             },
+
+            AppStage::LoggingIn { .. } => (),
         }
 
         if let Some(new_stage) = new_stage {
@@ -218,7 +224,7 @@ impl App {
         canvas: &mut Canvas,
         coordinate_system_helper: CoordinateSystemHelper,
     ) {
-        let ball_radius = self.boxes_size / 3.;
+        let mut ball_radius = self.boxes_size / 3.;
         let boxes_gaps = 10.;
         let rect_stroke_width = 5.;
         let ball_stroke_width = 5.;
@@ -277,9 +283,9 @@ impl App {
         stroke_paint.set_color4f(Color4f::new(1., 1., 1., 1.), None);
         canvas.draw_rect(
             Rect::new(
-                width / 2. - self.boxes_size / 2. - rect_stroke_width / 2.,
+                width  / 2. - self.boxes_size  / 2. - rect_stroke_width / 2.,
                 height / 2. - full_rect_height / 2. - rect_stroke_width / 2.,
-                width / 2. + self.boxes_size / 2. + rect_stroke_width / 2.,
+                width  / 2. + self.boxes_size  / 2. + rect_stroke_width / 2.,
                 height / 2. + full_rect_height / 2. + rect_stroke_width / 2.,
             ),
             &stroke_paint
@@ -319,12 +325,16 @@ impl App {
                             virtual_keycode: Some(VirtualKeyCode::Return), ..
                         }, .. } => {
                             if self.current_input.len() < self.pass_length {
-                                next_stage = Some(self.stage.with_red_flash(Duration::from_millis(500)));
+                                next_stage = Some(self.stage.with_red_flash(
+                                    Duration::from_millis(500)
+                                ));
                             }
                             else {
-                                next_stage = Some(AppStage::validating(
-                                    self.username.clone(), self.current_input.clone()
-                                ));
+                                (self.login_callback)(
+                                    self.login_username.clone(),
+                                    self.current_input.clone(),
+                                );
+                                next_stage = Some(AppStage::validating());
                             }
                         }
 
@@ -361,6 +371,11 @@ impl App {
             AppStage::Validating { .. } => {
 
             },
+
+            AppStage::LoggingIn { start } => {
+                let elapsed = start.elapsed().as_secs_f32();
+                ball_radius += (elapsed * 3.).exp();
+            }
         }
 
         /*
@@ -370,11 +385,10 @@ impl App {
         fill_paint.set_color4f(Color4f::new(1., 1., 1., 1.), None);
         canvas.draw_arc(
             Rect::new(
-                width / 2. - ball_radius,
-                height / 2. + full_rect_height / 2. - (self.boxes_size * self.ball_position) + boxes_gaps / 2.
-                - ball_radius * 2.,
-                width / 2. + ball_radius,
-                height / 2. + full_rect_height / 2. - (self.boxes_size * self.ball_position) + boxes_gaps / 2.,
+                ball_center.x - ball_radius,
+                ball_center.y - ball_radius,
+                ball_center.x + ball_radius,
+                ball_center.y + ball_radius,
             ),
             0., (self.current_input.chars().count() as f32 / self.pass_length as f32) * 360.,
             true,
@@ -384,11 +398,7 @@ impl App {
         stroke_paint.set_color4f(Color4f::new(1., 1., 1., 1.), None);
         stroke_paint.set_stroke_width(ball_stroke_width);
         canvas.draw_circle(
-            Point::new(
-                width / 2.,
-                height / 2. + full_rect_height / 2. - ball_radius - (self.boxes_size * self.ball_position) 
-                + boxes_gaps / 2.
-            ),
+            ball_center,
             ball_radius - ball_stroke_width / 2.,
             &stroke_paint,
         );
