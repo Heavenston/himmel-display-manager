@@ -1,9 +1,10 @@
 use std::collections::HashSet;
 use std::time::{ Instant, Duration };
+use std::sync::{ Arc, Mutex, atomic::{ AtomicBool, self } };
 
 use winit::event::{ KeyboardInput, WindowEvent, ElementState, VirtualKeyCode };
 use skulpin::{
-     CoordinateSystemHelper,
+    CoordinateSystemHelper,
     skia_safe,
 };
 use skia_safe::{
@@ -12,7 +13,27 @@ use skia_safe::{
     Canvas, paint, Paint,
 };
 
-#[derive(Debug, Clone, Copy)]
+type Author = pam::Authenticator<'static, pam::PasswordConv>;
+
+pub fn try_auth_with(
+    username: String,
+    password: String,
+    finished: Arc<AtomicBool>,
+    author_output: Arc<Mutex<Option<Author>>>,
+)  {
+    let mut author = Author::with_password("system-auth").unwrap();
+    author.get_handler().set_credentials(username, password);
+    let result = author.authenticate();
+    match result {
+        Ok(()) => {
+            *author_output.lock().unwrap() = Some(author);
+        },
+        Err(_) => ()
+    }
+    finished.store(true, atomic::Ordering::Release);
+}
+
+#[derive(Clone)]
 pub enum AppStage {
     Inputing {
         ball_red_flash_duration: Duration,
@@ -20,6 +41,8 @@ pub enum AppStage {
     },
     Validating {
         start: Instant,
+        finished: Arc<AtomicBool>,
+        author: Arc<Mutex<Option<Author>>>,
     },
 }
 
@@ -32,7 +55,7 @@ impl AppStage {
     }
 
     #[track_caller]
-    pub fn with_red_flash(self, dur: Duration) -> Self {
+    pub fn with_red_flash(&self, dur: Duration) -> Self {
         match self {
             Self::Inputing { .. } => Self::Inputing {
                 ball_red_flash_duration: dur,
@@ -42,17 +65,26 @@ impl AppStage {
         }
     }
 
-    pub fn validating() -> Self {
+    pub fn validating(username: String, password: String) -> Self {
+        let finished = Arc::default();
+        let author = Arc::new(Mutex::new(None));
+        let finished_ = Arc::clone(&finished);
+        let author_ = Arc::clone(&author);
+        std::thread::spawn(move || try_auth_with(username, password, finished_, author_));
         AppStage::Validating {
             start: Instant::now(),
+            finished,
+            author,
         }
     }
 }
 
-pub struct App<'a> {
-    last_events: Vec<WindowEvent<'a>>,
+pub struct App {
+    last_events: Vec<WindowEvent<'static>>,
     pressed_keys: HashSet<VirtualKeyCode>,
     boxes_size: f32,
+    authentificator: pam::Authenticator<'static, pam::PasswordConv>,
+    username: String,
 
     ball_position: f32,
     ball_velocity: f32,
@@ -64,12 +96,14 @@ pub struct App<'a> {
 }
 
 /// Public methods
-impl<'a> App<'a> {
+impl App {
     pub fn new() -> Self {
         Self {
             last_events: Default::default(),
             pressed_keys: Default::default(),
             boxes_size: 100.,
+            authentificator: pam::Authenticator::with_password("system-auth").unwrap(),
+            username: "malo".to_string(),
 
             ball_position: 0.,
             ball_velocity: 0.,
@@ -81,7 +115,7 @@ impl<'a> App<'a> {
         }
     }
 
-    pub fn add_window_event(&mut self, we: WindowEvent<'a>) {
+    pub fn add_window_event(&mut self, we: WindowEvent<'static>) {
         match &we {
             WindowEvent::KeyboardInput {
                 input: KeyboardInput { state, virtual_keycode: Some(vkc), .. },
@@ -114,7 +148,7 @@ impl<'a> App<'a> {
 }
 
 /// Private methods
-impl<'a> App<'a> {
+impl App {
     fn is_key_just_pressed(&self, vck: VirtualKeyCode) -> bool {
         self.last_events.iter().any(|we|
             matches!(we,
@@ -156,10 +190,16 @@ impl<'a> App<'a> {
                 }
             },
 
-            AppStage::Validating { start, .. } => {
-                if start.elapsed().as_secs_f32() > 2. {
-                    self.current_input.clear();
-                    new_stage = Some(AppStage::inputing().with_red_flash(Duration::from_millis(2000)));
+            AppStage::Validating { start, finished, author, .. } => {
+                if start.elapsed().as_secs_f32() > 2. && finished.load(atomic::Ordering::Acquire) {
+                    let author = author.lock().unwrap().take();
+                    if author.is_some() {
+                        std::process::exit(0);
+                    }
+                    else {
+                        self.current_input.clear();
+                        new_stage = Some(AppStage::inputing().with_red_flash(Duration::from_millis(2000)));
+                    }
                 }
                 else {
                     self.ball_velocity = self.ball_velocity / (1. + delta_t * 10.);
@@ -282,7 +322,9 @@ impl<'a> App<'a> {
                                 next_stage = Some(self.stage.with_red_flash(Duration::from_millis(500)));
                             }
                             else {
-                                next_stage = Some(AppStage::validating());
+                                next_stage = Some(AppStage::validating(
+                                    self.username.clone(), self.current_input.clone()
+                                ));
                             }
                         }
 
@@ -351,6 +393,8 @@ impl<'a> App<'a> {
             &stroke_paint,
         );
 
-        self.stage = next_stage.unwrap_or(self.stage);
+        if let Some(next) = next_stage {
+            self.stage = next;
+        }
     }
 }
