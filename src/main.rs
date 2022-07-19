@@ -1,4 +1,8 @@
 mod app;
+mod process_starts;
+mod pam_wrapper;
+
+use pam_wrapper::Author;
 
 use std::fmt;
 
@@ -14,10 +18,10 @@ use skia_safe::{
 };
 use winit::window::Fullscreen;
 
-pub type Author = pam::Authenticator<'static, pam::PasswordConv>;
-
 pub struct LoginResultEvent {
     pub success: bool,
+    pub username: String,
+    pub password: String,
     pub author: Author,
 }
 
@@ -31,6 +35,10 @@ impl fmt::Debug for LoginResultEvent {
 }
 
 fn main() {
+    if std::env::var("DISPLAY").is_err() {
+        process_starts::start_x_server();
+    }
+
     // Create the winit event loop
     let event_loop = winit::event_loop::EventLoop::<LoginResultEvent>::with_user_event();
 
@@ -75,21 +83,20 @@ fn main() {
 
     let login_callback = {
         let proxy = event_loop.create_proxy();
-        move |username, password| {
+        move |username: String, password: String| {
             std::thread::spawn({
                 let proxy = proxy.clone();
                 move || {
-                    let mut author = pam::Authenticator::with_password("system-auth").unwrap();
-                    author.get_handler().set_credentials(username, password);
-                    let auth_result = author.authenticate();
-                    let r = proxy.send_event(LoginResultEvent {
-                        success: auth_result.is_ok(),
+                    let mut author = Author::new();
+                    author
+                        .set_username(username.as_str())
+                        .set_password(password.as_str());
+                    
+                    proxy.send_event(LoginResultEvent {
+                        success: author.open_session().is_ok(),
+                        username, password,
                         author,
-                    });
-                    match r {
-                        Ok(()) => (),
-                        Err(e) => println!("{:?}", e),
-                    }
+                    }).expect("Could not send login event");
                 }
             });
         }
@@ -99,7 +106,7 @@ fn main() {
 
     // Start the window event loop. Winit will not return once run is called. We will get notified
     // when important events happen.
-    event_loop.run(move |event, _window_target, control_flow| {
+    event_loop.run(move |event, _start_x_serverwindow_target, control_flow| {
         match event {
             winit::event::Event::WindowEvent {
                 event: winit::event::WindowEvent::CloseRequested,
@@ -130,8 +137,11 @@ fn main() {
                 window.request_redraw();
             }
 
-            winit::event::Event::UserEvent(LoginResultEvent { success, author: _ }) => {
+            winit::event::Event::UserEvent(LoginResultEvent { success, mut author, .. }) => {
                 app.login_result(success);
+                if success {
+                    author.open_session().unwrap();
+                }
             }
 
             winit::event::Event::RedrawRequested(_window_id) => {
@@ -151,6 +161,10 @@ fn main() {
                     println!("Error during draw: {:?}", e);
                     *control_flow = winit::event_loop::ControlFlow::Exit
                 }
+            }
+
+            winit::event::Event::Suspended => {
+                process_starts::stop_x_server();
             }
 
             _ => {}
