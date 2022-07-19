@@ -4,6 +4,7 @@ use std::process;
 use std::sync::Mutex;
 use std::env;
 use std::path::Path;
+use std::time::{ Duration, Instant };
 
 use users::os::unix::UserExt;
 
@@ -11,6 +12,7 @@ const DISPLAY: &str = ":1";
 const VT: &str = "vt01";
 
 static X_SERVER: Mutex<Option<process::Child>> = Mutex::new(None);
+static X_SERVER_TIMEOUT: Duration = Duration::from_millis(5000);
 
 pub fn start_x_server() {
     let mut x_server = X_SERVER.lock().unwrap();
@@ -24,7 +26,12 @@ pub fn start_x_server() {
         .spawn().expect("Could not start the X server");
     *x_server = Some(child);
 
-    loop {
+    let start = Instant::now();
+    while x11rb::connect(Some(DISPLAY)).is_err() {
+        if start.elapsed() > X_SERVER_TIMEOUT {
+            panic!("X Server timeout");
+        }
+        std::thread::sleep(Duration::from_millis(150));
     }
 }
 
