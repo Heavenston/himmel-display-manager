@@ -28,30 +28,29 @@ fn cprc(code: PamReturnCode) -> Result<(), PamReturnCode> {
 pub(crate) extern "C" fn pam_conv(
     num_msg: c_int,
     in_msg:  *mut *mut PamMessage,
-    in_resp: *mut *mut PamResponse,
+    out_resp: *mut *mut PamResponse,
     appdata_ptr: *mut c_void,
 ) -> c_int { unsafe { // Unsafe is here to avoid changing the signature
-    let resp = calloc(num_msg as usize, mem::size_of::<PamResponse>() as size_t) as *mut PamResponse;
-    if resp.is_null() {
+    let resp_ptr = calloc(num_msg as usize, mem::size_of::<PamResponse>() as size_t) as *mut PamResponse;
+    if resp_ptr.is_null() {
         return PamReturnCode::BUF_ERR as c_int;
     }
+    let resp = &mut *resp_ptr;
 
-    let (username, password) = &*(appdata_ptr as *mut (CString, CString));
+    let (username, password) = &*(appdata_ptr as *const (CString, CString));
     let mut result: PamReturnCode = PamReturnCode::SUCCESS;
 
     for i in 0..num_msg as isize {
         let current_msg  = &mut **in_msg.offset(i);
-        let current_resp = &mut *(*in_resp).offset(i);
-
         let msg = CStr::from_ptr(current_msg.msg);
 
         // match on msg_style
         match PamMessageStyle::from(current_msg.msg_style) {
             PamMessageStyle::PROMPT_ECHO_ON => {
-                current_resp.resp = strdup(username.as_ptr());
+                resp.resp = strdup(username.as_ptr());
             }
             PamMessageStyle::PROMPT_ECHO_OFF => {
-                current_resp.resp = strdup(password.as_ptr());
+                resp.resp = strdup(password.as_ptr());
             }
             PamMessageStyle::TEXT_INFO => {
                 println!("INFO: {}", msg.to_str().unwrap());
@@ -69,9 +68,9 @@ pub(crate) extern "C" fn pam_conv(
 
     // free allocated memory if an error occured
     if result != PamReturnCode::SUCCESS {
-        free(resp as *mut c_void);
+        free(resp_ptr as *mut c_void);
     } else {
-        *in_resp = resp;
+        *out_resp = resp_ptr;
     }
 
     result as c_int
