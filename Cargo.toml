@@ -13,4 +13,7 @@ sdl2 = { version = ">=0.33", features = ["bundled", "static-link"] }
 skulpin = { version = "0.14.1", features = ["skia-complete"] }
 users = "0.11.0"
 winit = "0.26.1"
+x11rb = "0.10.1"
 
+[features]
+debug = []

@@ -18,29 +18,34 @@ use skia_safe::{
 };
 use winit::window::Fullscreen;
 
-pub struct LoginResultEvent {
-    pub success: bool,
-    pub username: String,
-    pub password: String,
-    pub author: Author,
+pub enum UserEvent {
+    LoginResult {
+        success: bool,
+        username: String,
+        password: String,
+        author: Author,
+    },
+    StartSession {
+        username: String,
+        author: Author,
+    }
 }
 
-impl fmt::Debug for LoginResultEvent {
+impl fmt::Debug for UserEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("LoginResultEvent")
-            .field("success", &self.success)
-            .field("author", &())
+        f.debug_struct("UserEvent")
             .finish()
     }
 }
 
 fn main() {
-    if std::env::var("DISPLAY").is_err() {
+    if cfg!(not(feature="debug")) {
         process_starts::start_x_server();
     }
 
     // Create the winit event loop
-    let event_loop = winit::event_loop::EventLoop::<LoginResultEvent>::with_user_event();
+    let event_loop = winit::event_loop::EventLoop::<UserEvent>::with_user_event();
+    let event_loop_proxy = event_loop.create_proxy();
 
     let monitor = event_loop.primary_monitor().or(event_loop.available_monitors().next());
     let fullscreen = monitor.as_ref()
@@ -82,7 +87,7 @@ fn main() {
     let mut renderer = renderer.unwrap();
 
     let login_callback = {
-        let proxy = event_loop.create_proxy();
+        let proxy = event_loop_proxy.clone();
         move |username: String, password: String| {
             std::thread::spawn({
                 let proxy = proxy.clone();
@@ -92,7 +97,7 @@ fn main() {
                         .set_username(username.as_str())
                         .set_password(password.as_str());
                     
-                    proxy.send_event(LoginResultEvent {
+                    proxy.send_event(UserEvent::LoginResult {
                         success: author.open_session().is_ok(),
                         username, password,
                         author,
@@ -103,9 +108,8 @@ fn main() {
     };
 
     let mut app = app::App::new(login_callback, "malo", 4);
+    let mut do_on_quit: Vec<Box<dyn FnOnce() -> ()>> = Vec::new();
 
-    // Start the window event loop. Winit will not return once run is called. We will get notified
-    // when important events happen.
     event_loop.run(move |event, _start_x_serverwindow_target, control_flow| {
         match event {
             winit::event::Event::WindowEvent {
@@ -133,15 +137,30 @@ fn main() {
             }
 
             winit::event::Event::MainEventsCleared => {
-                // Queue a RedrawRequested event.
                 window.request_redraw();
             }
 
-            winit::event::Event::UserEvent(LoginResultEvent { success, mut author, .. }) => {
-                app.login_result(success);
-                if success {
-                    author.open_session().unwrap();
+            winit::event::Event::UserEvent(UserEvent::LoginResult{ success, author, username, .. }) => {
+                let wait_duration = app.login_result(success);
+                std::thread::spawn({
+                    let proxy = event_loop_proxy.clone();
+                    move || {
+                        std::thread::sleep(wait_duration);
+                        proxy.send_event(UserEvent::StartSession { username, author }).unwrap();
+                    }
+                });
+            }
+
+            winit::event::Event::UserEvent(UserEvent::StartSession { username, author }) => {
+                #[cfg(not(feature = "debug"))]
+                {
+                    let mut child = process_starts::start_session(author, username);
+                    do_on_quit.push(Box::new(move || {
+                        child.wait().unwrap();
+                    }));
                 }
+
+                *control_flow = winit::event_loop::ControlFlow::Exit;
             }
 
             winit::event::Event::RedrawRequested(_window_id) => {
@@ -163,8 +182,12 @@ fn main() {
                 }
             }
 
-            winit::event::Event::Suspended => {
+            winit::event::Event::LoopDestroyed => {
                 process_starts::stop_x_server();
+
+                for f in do_on_quit.drain(..) {
+                    f();
+                }
             }
 
             _ => {}

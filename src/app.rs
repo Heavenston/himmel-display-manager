@@ -15,6 +15,9 @@ use skia_safe::{
     Canvas, paint, Paint,
 };
 
+const LOGIN_LOADING_DURATION: Duration = Duration::from_millis(2000);
+const LOGIN_ANIMATION_DURATION: Duration = Duration::from_millis(500);
+
 #[derive(Clone)]
 pub enum AppStage {
     Inputing {
@@ -138,11 +141,14 @@ impl<F> App<F>
         self.last_update = Instant::now();
     }
 
-    pub fn login_result(&mut self, s: bool) {
+    /// Returns the amount of time the ending animation will last
+    pub fn login_result(&mut self, s: bool) -> Duration {
         match &mut self.stage {
             AppStage::Validating { finished, succeed, .. } => {
                 *finished = true;
                 *succeed = s;
+
+                LOGIN_ANIMATION_DURATION + LOGIN_LOADING_DURATION
             }
             
             _ => panic!("Called login_result with the app in the wrong stage"),
@@ -196,7 +202,7 @@ impl<F> App<F>
             },
 
             AppStage::Validating { start, finished, succeed, .. } => {
-                if start.elapsed().as_secs_f32() > 2. && *finished {
+                if start.elapsed() > LOGIN_LOADING_DURATION && *finished {
                     if *succeed {
                         new_stage = Some(AppStage::logging_in());
                     }
@@ -374,7 +380,10 @@ impl<F> App<F>
 
             AppStage::LoggingIn { start } => {
                 let elapsed = start.elapsed().as_secs_f32();
-                ball_radius += (elapsed * 3.).exp();
+                let duration = LOGIN_ANIMATION_DURATION.as_secs_f32();
+                let speed = width.ln() / duration;
+
+                ball_radius += (elapsed * speed).exp();
             }
         }
 

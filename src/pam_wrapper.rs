@@ -1,6 +1,6 @@
 use std::ptr::null_mut;
-use std::ffi::{ c_void, CStr, CString };
-use std::mem;
+use std::ffi::{ c_void, CStr, CString, OsStr };
+use std::{ mem, env };
 use libc::{ c_int, calloc, size_t, strdup, free };
 
 use pam_sys::types::{
@@ -122,6 +122,19 @@ impl Author {
         }
 
         Ok(())
+    }
+
+    pub fn put_env<'a>(
+        &mut self,
+        key: impl AsRef<OsStr>,
+        value: impl AsRef<OsStr>,
+    ) {
+        let key = key.as_ref();
+        let value = value.as_ref();
+        env::set_var(key, value);
+        let key = key.to_string_lossy();
+        let value = value.to_string_lossy();
+        cprc(pms::putenv(unsafe { &mut *self.handle }, &format!("{key}={value}"))).unwrap();
     }
 }
 

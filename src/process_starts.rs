@@ -23,6 +23,9 @@ pub fn start_x_server() {
         .arg(VT)
         .spawn().expect("Could not start the X server");
     *x_server = Some(child);
+
+    loop {
+    }
 }
 
 pub fn stop_x_server() {
@@ -32,16 +35,19 @@ pub fn stop_x_server() {
     }
 }
 
-pub fn start_session(mut author: Author, username: String) {
+pub fn start_session(mut author: Author, username: String) -> process::Child {
     let user = users::get_user_by_name(&username).expect("Could not find user");
-    env::set_var("HOME", user.home_dir());
-    env::set_var("PWD", user.home_dir());
-    env::set_var("SHELL", user.shell());
-    env::set_var("USER", user.name());
-    env::set_var("LOGNAME", user.name());
-    env::set_var("PATH", "/usr/local/sbin:/usr/local/bin:/usr/bin:/bin");
-    env::set_var("MAIL", format!("/var/spool/mail/{}", user.name().to_string_lossy()));
-    env::set_var("XAUTHORITY", user.home_dir().join(".Xauthority"));
+    author.put_env("HOME", user.home_dir());
+    author.put_env("PWD", user.home_dir());
+    author.put_env("SHELL", user.shell());
+    author.put_env("USER", user.name());
+    author.put_env("LOGNAME", user.name());
+    author.put_env("PATH", "/usr/local/sbin:/usr/local/bin:/usr/bin:/bin");
+    author.put_env("MAIL", format!("/var/spool/mail/{}", user.name().to_string_lossy()));
+    author.put_env("XAUTHORITY", user.home_dir().join(".Xauthority"));
 
-    author.open_session().expect("Could not open session");
+    process::Command::new(user.shell())
+        .arg("-c").arg("/bin/bash --login .xinitrc")
+        .current_dir(user.home_dir())
+        .spawn().expect("Could not start session")
 }
