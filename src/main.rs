@@ -39,7 +39,7 @@ impl fmt::Debug for UserEvent {
 }
 
 fn main() {
-    if cfg!(not(feature="debug")) {
+    if cfg!(not(feature="debug")) && std::env::var("DISPLAY").is_err() {
         process_starts::start_x_server();
     }
 
@@ -178,7 +178,6 @@ fn main() {
                     },
                 ) {
                     println!("Error during draw: {:?}", e);
-                    *control_flow = winit::event_loop::ControlFlow::Exit
                 }
             }
 

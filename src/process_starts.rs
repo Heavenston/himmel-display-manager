@@ -23,6 +23,8 @@ pub fn start_x_server() {
     let child = process::Command::new("/usr/bin/X")
         .arg(DISPLAY)
         .arg(VT)
+        .arg("-dpi").arg("96")
+        .arg("-nolisten").arg("tcp")
         .spawn().expect("Could not start the X server");
     *x_server = Some(child);
 
