@@ -42,22 +42,29 @@ fn main() {
     if cfg!(not(feature="debug")) && std::env::var("DISPLAY").is_err() {
         process_starts::start_x_server();
     }
+    if cfg!(not(feature="debug")) {
+        std::process::Command::new("/bin/bash")
+            .arg("-c").arg("xlayoutdisplay -m --dpi 96")
+            .spawn().unwrap().wait().unwrap();
+    }
 
     // Create the winit event loop
     let event_loop = winit::event_loop::EventLoop::<UserEvent>::with_user_event();
     let event_loop_proxy = event_loop.create_proxy();
 
     let monitor = event_loop.primary_monitor().or(event_loop.available_monitors().next());
-    let fullscreen = monitor.as_ref()
-        .and_then(|m| m.video_modes().next())
-        .map(|vm| Fullscreen::Exclusive(vm));
-    println!("Using fullscreen: {:?}", fullscreen.is_some());
+    let target_window_size = monitor.as_ref()
+        .map(|m| m.size().to_logical(m.scale_factor()))
+        .unwrap_or(winit::dpi::LogicalSize {
+            width: 960,
+            height: 800,
+        });
 
     // Create a single window
     let window = winit::window::WindowBuilder::new()
         .with_title("Skulpin")
         .with_resizable(false)
-        .with_fullscreen(fullscreen)
+        .with_inner_size(target_window_size)
         .build(&event_loop)
         .expect("Failed to create window");
 
@@ -165,6 +172,7 @@ fn main() {
 
             winit::event::Event::RedrawRequested(_window_id) => {
                 let window_size = window.inner_size();
+                println!("{window_size:?}");
                 let window_extents = RafxExtents2D {
                     width: window_size.width,
                     height: window_size.height,

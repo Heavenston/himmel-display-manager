@@ -1,4 +1,4 @@
-use super::Author;
+use crate::pam_wrapper::Author;
 
 use std::process;
 use std::sync::Mutex;
@@ -7,12 +7,14 @@ use std::path::Path;
 use std::time::{ Duration, Instant };
 
 use users::os::unix::UserExt;
+use x11rb::protocol::randr::ConnectionExt;
+use x11rb::connection::Connection;
 
 const DISPLAY: &str = ":1";
 const VT: &str = "vt01";
 
 static X_SERVER: Mutex<Option<process::Child>> = Mutex::new(None);
-static X_SERVER_TIMEOUT: Duration = Duration::from_millis(5000);
+static X_SERVER_TIMEOUT: Duration = Duration::from_millis(15000);
 
 pub fn start_x_server() {
     let mut x_server = X_SERVER.lock().unwrap();
@@ -20,21 +22,26 @@ pub fn start_x_server() {
         return;
     }
     std::env::set_var("DISPLAY", DISPLAY);
-    let child = process::Command::new("/usr/bin/X")
-        .arg(DISPLAY)
-        .arg(VT)
-        .arg("-dpi").arg("96")
+    let child = process::Command::new("/usr/lib/Xorg")
         .arg("-nolisten").arg("tcp")
+        .arg(DISPLAY).arg(VT)
+        .arg("-keeptty") //.arg("-auth").arg("/usr/share/himmel_display_manager/xauthority")
         .spawn().expect("Could not start the X server");
     *x_server = Some(child);
 
     let start = Instant::now();
-    while x11rb::connect(Some(DISPLAY)).is_err() {
+    loop {
+        match x11rb::connect(None) {
+            Ok(_) => break,
+            Err(e) => println!("Conn err: {e:?}"),
+        }
+        println!("{:?}", start.elapsed());
+
         if start.elapsed() > X_SERVER_TIMEOUT {
             panic!("X Server timeout");
         }
-        std::thread::sleep(Duration::from_millis(150));
-    }
+        std::thread::sleep(Duration::from_millis(500));
+    };
 }
 
 pub fn stop_x_server() {
