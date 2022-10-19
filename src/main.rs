@@ -117,6 +117,7 @@ fn main() {
     let mut app = app::App::new(login_callback, "malo", 4);
     let mut do_on_quit: Vec<Box<dyn FnOnce() -> ()>> = Vec::new();
 
+    let mut window = Some(window);
     event_loop.run(move |event, _start_x_serverwindow_target, control_flow| {
         match event {
             winit::event::Event::WindowEvent {
@@ -143,8 +144,8 @@ fn main() {
                 }
             }
 
-            winit::event::Event::MainEventsCleared => {
-                window.request_redraw();
+            winit::event::Event::MainEventsCleared => if let Some(w) = &window {
+                w.request_redraw();
             }
 
             winit::event::Event::UserEvent(UserEvent::LoginResult{ success, author, username, .. }) => {
@@ -159,19 +160,19 @@ fn main() {
             }
 
             winit::event::Event::UserEvent(UserEvent::StartSession { username, author }) => {
-                #[cfg(not(feature = "debug"))]
-                {
+                if cfg!(not(feature = "debug")) {
                     let mut child = process_starts::start_session(author, username);
                     do_on_quit.push(Box::new(move || {
                         child.wait().unwrap();
                     }));
                 }
 
+                drop(window.take());
                 *control_flow = winit::event_loop::ControlFlow::Exit;
             }
 
-            winit::event::Event::RedrawRequested(_window_id) => {
-                let window_size = window.inner_size();
+            winit::event::Event::RedrawRequested(_window_id) => if let Some(w) = &window {
+                let window_size = w.inner_size();
                 println!("{window_size:?}");
                 let window_extents = RafxExtents2D {
                     width: window_size.width,
@@ -180,7 +181,7 @@ fn main() {
 
                 if let Err(e) = renderer.draw(
                     window_extents,
-                    window.scale_factor(),
+                    w.scale_factor(),
                     |canvas, coordinate_system_helper| {
                         app.frame(canvas, coordinate_system_helper);
                     },
@@ -190,11 +191,11 @@ fn main() {
             }
 
             winit::event::Event::LoopDestroyed => {
-                process_starts::stop_x_server();
-
                 for f in do_on_quit.drain(..) {
                     f();
                 }
+
+                process_starts::stop_x_server();
             }
 
             _ => {}
